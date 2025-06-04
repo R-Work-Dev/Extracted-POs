@@ -1,0 +1,102 @@
+function extractStyleDataWithTotalsAndSimpleUniqueList() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const allSheetNames = ["Total Items", "Unique Items"];
+
+  // Delete existing output sheets
+  allSheetNames.forEach(name => {
+    const existing = ss.getSheetByName(name);
+    if (existing) ss.deleteSheet(existing);
+  });
+
+  const totalSheet = ss.insertSheet("Total Items");
+  const uniqueSheet = ss.insertSheet("Unique Items");
+
+  const sheets = ss.getSheets().filter(s => !allSheetNames.includes(s.getName()));
+  const keyFields = ["STYLE NUMBER", "VENDOR", "STYLE NAME", "COLOR"];
+  const validSizes = ["XXS", "XS", "S", "M", "L", "XL", "1XL", "2XL", "3XL"];
+
+  const uniqueSet = new Set();
+  let headersSet = false;
+  let totalAddedRows = 0;
+  let totalSkippedRows = 0;
+  let sheetsSkipped = [];
+
+  sheets.forEach(sheet => {
+    const data = sheet.getDataRange().getValues();
+    if (data.length === 0) return;
+
+    let colIndexes = {};
+    let headerRow = -1;
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i].map(String);
+      if (keyFields.every(col => row.includes(col))) {
+        headerRow = i;
+
+        keyFields.forEach(col => {
+          colIndexes[col] = row.indexOf(col);
+        });
+
+        const colorIdx = colIndexes["COLOR"];
+        const totalIdx = row.findIndex(val => val.toUpperCase().includes("TOTAL"));
+
+        const sizeHeaders = row.slice(colorIdx + 1, totalIdx).filter(val => validSizes.includes(val));
+        colIndexes["SIZE_HEADERS"] = sizeHeaders;
+        colIndexes["SIZE_START"] = row.findIndex(val => val === sizeHeaders[0]);
+        colIndexes["SIZE_END"] = colIndexes["SIZE_START"] + sizeHeaders.length;
+        colIndexes["TOTAL"] = totalIdx;
+
+        if (!headersSet) {
+          const fullHeader = [...keyFields, ...sizeHeaders, "TOTAL"];
+          totalSheet.appendRow(fullHeader);
+          uniqueSheet.appendRow(keyFields);
+          headersSet = true;
+        }
+
+        break;
+      }
+    }
+
+    if (headerRow === -1) {
+      sheetsSkipped.push(sheet.getName());
+      return;
+    }
+
+    for (let i = headerRow + 1; i < data.length; i++) {
+      const row = data[i];
+      const keyValues = keyFields.map(col => row[colIndexes[col]] || "").map(String);
+
+      if (keyValues.some(val => val.trim() === "")) {
+        totalSkippedRows++;
+        continue;
+      }
+
+      const sizeValues = row.slice(colIndexes["SIZE_START"], colIndexes["SIZE_END"]).map(toNumber);
+      const total = toNumber(row[colIndexes["TOTAL"]]);
+      const fullRow = [...keyValues, ...sizeValues, total];
+
+      totalSheet.appendRow(fullRow);
+      totalAddedRows++;
+
+      const key = keyValues.join("||");
+      if (!uniqueSet.has(key)) {
+        uniqueSet.add(key);
+        uniqueSheet.appendRow(keyValues);
+      }
+    }
+  });
+
+  // Log the summary
+  Logger.log(`Rows added to Total Items: ${totalAddedRows}`);
+  Logger.log(`Rows skipped (missing key fields): ${totalSkippedRows}`);
+  if (sheetsSkipped.length > 0) {
+    Logger.log(`Sheets skipped due to missing headers: ${sheetsSkipped.join(", ")}`);
+  }
+
+  SpreadsheetApp.flush();
+}
+
+function toNumber(value) {
+  const num = parseFloat(value);
+  return isNaN(num) ? 0 : num;
+}
